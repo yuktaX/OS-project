@@ -1,4 +1,10 @@
 #include<stdio.h>
+#define MAX_CART 50
+
+struct index{
+    int key;
+    int offset;
+};
 
 struct product{
     int prod_id;
@@ -8,8 +14,6 @@ struct product{
 };
 
 struct cart{
-    int cart_id;
     int cust_id;
-    int uniq_count = 0;
-    struct product items[50];
+    struct product items[MAX_CART];
 };

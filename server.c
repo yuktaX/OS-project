@@ -7,357 +7,695 @@
 #include <unistd.h>
 #include <sys/time.h>
 #include<fcntl.h>
-#include "product_cart.h";
+#include "product_cart.h"
 #define PORT 8080
 #define MAX_STORE_SIZE 100
 
+
+//functions for locking
+void ReadProductLock(int fd, struct flock lock)
+{
+    lock.l_len = 0;
+    lock.l_type = F_RDLCK;
+    lock.l_start = 0;
+    lock.l_whence = SEEK_SET;
+    fcntl(fd, F_SETLKW, &lock);
+}
+
+void WriteProductLock(int fd, struct flock lock)
+{
+    lseek(fd, (-1)*sizeof(struct product), SEEK_CUR);
+    lock.l_type = F_WRLCK;
+    lock.l_whence = SEEK_CUR;
+    lock.l_start = 0;
+    lock.l_len = sizeof(struct product);
+    fcntl(fd, F_SETLKW, &lock);
+}
+
+void CustomerLock(int fd_cust, struct flock lock)
+{   //locks customers file
+    lock.l_len = 0;
+    lock.l_type = F_RDLCK;
+    lock.l_start = 0;
+    lock.l_whence = SEEK_SET;
+    fcntl(fd_cust, F_SETLKW, &lock);
+}
+
+void Unlock(int fd, struct flock lock)
+{
+    lock.l_type = F_UNLCK;
+    fcntl(fd, F_SETLKW, &lock);
+}
+
+void LockCart(int fd_cart, struct flock lock_cart, int offset, int ch)//--whats ch
+{
+    lock_cart.l_whence = SEEK_SET;
+    lock_cart.l_len = sizeof(struct cart);
+    lock_cart.l_start = offset;
+    if (ch == 1)
+    {
+        lock_cart.l_type = F_RDLCK;
+    }
+    else
+    {
+        lock_cart.l_type = F_WRLCK;
+    }
+    fcntl(fd_cart, F_SETLKW, &lock_cart);
+    lseek(fd_cart, offset, SEEK_SET);
+}
+
+int getOffset(int cid, int fd_cust)
+{
+    if(cid  < 0)
+        return -1;
+    struct flock lock;
+    struct index n;
+    CustomerLock(fd_cust, lock);
+
+    while(read(fd_cust, &n, sizeof(struct index)))
+    {
+        if(n.key == cid)
+        {
+            Unlock(fd_cust, lock);
+            return n.offset;
+        }
+    }
+}
+
+void addProduct(int fd, int newsd)
+{
+    int id, cost, qty, flg = 0; char name[100];
+    struct product p;
+
+    read(newsd, &p, sizeof(struct product));
+
+    id = p.prod_id;
+    cost = p.cost;
+    qty = p.qty;
+
+    struct flock lock;
+    ReadProductLock(fd, lock);
+    struct product p1;
+
+    while (read(fd, &p1, sizeof(struct product)))
+    {
+        if (p.prod_id == id && p.qty > 0)
+        {
+            write(newsd, "Duplicate product\n", sizeof("Duplicate product\n"));
+            Unlock(fd, lock);
+            flg = 1;
+            break;
+        }
+    }
+    if(flg == 0)
+    {
+        lseek(fd, 0, SEEK_END);
+        p.prod_id = id;
+        strcpy(p.pname, name);
+        p.cost= cost;
+        p.qty = qty;
+
+        write(fd, &p, sizeof(struct product));
+        write(newsd, "Added successfully\n", sizeof("Added succesfully\n"));
+        Unlock(fd, lock); 
+    }
+}
+
+void showProducts(int fd, int newsd)
+{
+    struct flock lock;
+    ReadProductLock(fd, lock);
+
+    struct product p;
+    while (read(fd, &p, sizeof(struct product)))
+    {
+        if (p.prod_id != -1)
+            write(newsd, &p, sizeof(struct product));
+    }
+    
+    p.prod_id = -1;//--um whhy
+    write(newsd, &p, sizeof(struct product));
+    Unlock(fd, lock);
+}
+
+void updateProduct(int fd, int newsd, int choice)
+{
+    int id, val = -1, flg = 0;
+    struct product p1;
+    read(newsd, &p1, sizeof(struct product));
+    id = p1.prod_id;
+    
+    if (choice == 1)//update cost
+        val = p1.cost;
+    else
+        val = p1.qty; //update quantity
+
+    if (choice == 2 && val == 0)
+    {
+        deleteProduct(fd, newsd, id);
+        return;
+    }
+
+    struct flock lock;
+    ReadProductLock(fd, lock);
+    
+    struct product p;
+    while (read(fd, &p, sizeof(struct product)))
+    {
+        if (p.prod_id == id)
+        {
+            Unlock(fd, lock);
+            WriteProductLock(fd, lock);
+
+            if (choice == 1)
+                p.cost = val;
+            else
+                p.qty = val;
+
+            write(fd, &p, sizeof(struct product));
+
+            if (choice == 1)
+                write(newsd, "Price modified", sizeof("Price modified"));
+            else
+                write(newsd, "Quantity modified", sizeof("Quantity modified"));               
+
+            Unlock(fd, lock);
+            flg = 1;
+            break;
+        }
+    }
+
+    if(flg == 0)
+    {
+        write(newsd, "Invalid product id", sizeof("Invalid product id"));
+        Unlock(fd, lock);
+    }
+}
+
+void deleteProduct(int fd, int newsd, int id){
+
+    struct flock lock;
+    ReadProductLock(fd, lock);
+
+    struct product p;
+    int flg = 0;
+    while (read(fd, &p, sizeof(struct product)))
+    {
+        if (p.prod_id == id)
+        {
+            Unlock(fd, lock);
+            WriteProductLock(fd, lock);
+
+            p.prod_id = -1; //id == -1 indicates invalid/deleted product
+            strcpy(p.pname, "");
+            p.cost = -1;
+            p.qty = -1;
+
+            write(fd, &p, sizeof(struct product));
+            write(newsd, "Delete successful", sizeof("Delete successful"));
+
+            Unlock(fd, lock);
+            flg = 1;
+            break;
+        }
+    }
+    if (flg == 0)
+    {
+        write(newsd, "Invalid product id", sizeof("Invalid product id"));
+        Unlock(fd, lock);
+    }
+}
+//client functions
+void AddCustomer(int fd_cart, int fd_custs, int newsd)
+{
+    char buf;
+    read(newsd, &buf, sizeof(char));
+    if (buf == 'c')
+    {
+        struct flock lock;
+        CustomerLock(fd_custs, lock);
+        
+        int max_id = -1; 
+        struct index id;
+        while(read(fd_custs, &id, sizeof(struct index))) //finding the lastest id added to file/store
+        {
+            if (id.key > max_id)
+                max_id = id.key;
+        }
+
+        max_id++;
+        
+        id.key = max_id; //adding new id and cart id to file
+        id.offset = lseek(fd_cart, 0, SEEK_END);
+        lseek(fd_custs, 0, SEEK_END);
+        write(fd_custs, &id, sizeof(struct index));
+
+        struct cart c;
+        id.key = max_id;
+        for(int i = 0; i < MAX_CART; i++) //initialising cart for new customer
+        {
+            c.items[i].prod_id = -1;
+            strcpy(c.items[i].pname , "");
+            c.items[i].qty = -1;
+            c.items[i].cost = -1;
+        }
+
+        write(fd_cart, &c, sizeof(struct cart));
+        Unlock(fd_custs, lock);
+        write(newsd, &max_id, sizeof(int));
+    }
+}
+
+void ViewCart(int fd_cart, int newsd, int fd_custs)
+{
+    int cid = -1;
+    read(newsd, &cid, sizeof(int));
+
+    int offset = getOffset(cid, fd_custs);//get offset from file
+    struct cart c;
+
+    if(offset == -1)//no cid found, so set to -1
+    {
+        struct cart c;
+        c.cust_id = -1;
+        write(newsd, &c, sizeof(struct cart));
+        
+    }
+    else
+    {
+        struct cart c;
+        struct flock lock_cart;
+        
+        LockCart(fd_cart, lock_cart, offset, 1);
+        read(fd_cart, &c, sizeof(struct cart));
+        write(newsd, &c, sizeof(struct cart));
+        Unlock(fd_cart, lock_cart);
+    }
+}
+void BuyProduct(int fd, int fd_cart, int fd_custs, int newsd)
+{
+    int cid = -1;
+    read(newsd, &cid, sizeof(int));
+    int offset = getOffset(cid, fd_custs);
+
+    write(newsd, &offset, sizeof(int));
+
+    if (offset == -1)
+        return;
+
+    struct flock lock_cart;
+    
+    int i = -1;
+    LockCart(fd_cart, lock_cart, offset, 1);
+    struct cart c;
+    read(fd_cart, &c, sizeof(struct cart));//get customers cart
+
+    struct flock lock_prod;
+    ReadProductLock(fd, lock_prod);//lock products as buying is happening
+    
+    struct product p;struct product p1;
+    read(newsd, &p, sizeof(struct product));//which prod to be added
+
+    // int prod_id = p.prod_id;
+    // int qty = p.qty;
+
+    int found = 0;
+    while (read(fd, &p1, sizeof(struct product)))//search for product in store
+    {
+        if (p1.prod_id == p.prod_id)
+        {
+            if (p1.qty >= p.qty)
+            {
+                found = 1;
+                break;
+            }
+        }
+    }
+    Unlock(fd_cart, lock_cart);
+    Unlock(fd, lock_prod);
+
+    if(found == 0)
+    {
+        write(newsd, "Invalid product id or out of stock\n", sizeof("Invalid product id or out of stock\n"));
+        return;
+    }
+
+    int flg = 0, flg1 = 0;
+
+    for (int i = 0; i < MAX_CART; i++) //check if product already exists
+    {
+        if(c.items[i].prod_id == p.prod_id)
+        {
+            flg1 = 1;
+            break;
+        }
+    }
+
+    if(flg == 1)
+    {
+        write(newsd, "Product already exists in cart\n", sizeof("Product already exists in cart\n"));
+        return;
+    }
+
+    for(int i = 0; i < MAX_CART; i++)//adding product to cart
+    {
+        if (c.items[i].prod_id == -1) //find the first empty location and enter the product there
+        {
+            flg = 1;
+            c.items[i].prod_id = p.prod_id;
+            c.items[i].qty = p.qty;
+            strcpy(c.items[i].pname, p1.pname);
+            c.items[i].cost = p1.cost;
+            break;
+
+        }
+        else if(c.items[i].qty <= 0)//checking another condition if qty <= 0
+        {
+            flg = 1;
+            c.items[i].prod_id = p.prod_id;
+            c.items[i].qty = p.qty;
+            strcpy(c.items[i].pname, p1.pname);
+            c.items[i].cost = p1.cost;
+            break;
+        }
+    }
+
+    if(flg == 0)
+    {
+        write(newsd,"Cart limit reached\n", sizeof("Cart limit reached\n"));
+        return;
+    }
+
+    write(newsd, "Item added to cart\n", sizeof("Item added to cart\n"));
+
+    LockCart(fd_cart, lock_cart, offset, 2);    
+    write(fd_cart, &c, sizeof(struct cart));
+    Unlock(fd_cart, lock_cart);
+}
+
+void EditCart(int fd, int fd_cart, int fd_custs, int newsd){
+
+    int cid = -1;
+    read(newsd, &cid, sizeof(int));
+
+    int offset = getOffset(cid, fd_custs);
+
+    write(newsd, &offset, sizeof(int));
+    if (offset == -1)
+        return;
+    
+
+    struct flock lock_cart;
+    LockCart(fd_cart, lock_cart, offset, 1);
+    struct cart c;
+    read(fd_cart, &c, sizeof(struct cart));
+
+    int pid, qty;
+    struct product p;
+    read(newsd, &p, sizeof(struct product));
+
+
+    int flg = -1, i;
+    for (i = 0; i < MAX_CART; i++)//search for product in cart
+    {
+        if (c.items[i].prod_id == p.prod_id)
+        {
+            struct flock lock_prod;
+            ReadProductLock(fd, lock_prod);
+
+            struct product p1;
+            while(read(fd, &p1, sizeof(struct product)))//check if product is there in store
+            {
+                if (p1.prod_id == pid && p1.qty > 0) 
+                {
+                    flg = 0;
+                    if (p1.qty >= qty)
+                    {
+                        flg = 1;
+                        break;
+                    }
+                }
+            }
+
+            Unlock(fd, lock_prod);
+            break;
+        }
+    }
+    Unlock(fd_cart, lock_cart);
+
+    if(flg == 0)
+    {
+        write(newsd, "Product out of stock\n", sizeof("Product out of stock\n"));
+        return;
+    }
+    if(flg == -1)
+    {
+        write(newsd, "Product not in cart \n", sizeof("Product not in cart\n"));
+        return;
+    }
+
+    c.items[i].qty = qty;
+    write(newsd, "Update successful\n", sizeof("Update successful\n"));
+    LockCart(fd_cart, lock_cart, offset, 2);
+    write(fd_cart, &c, sizeof(struct cart));
+    Unlock(fd_cart, lock_cart);
+}
+
+void GetPayment(int fd, int fd_cart, int fd_custs, int newsd){
+    int cid = -1;
+    read(newsd, &cid, sizeof(int));
+
+    int offset = getOffset(cid, fd_custs); //get the cart for resp customer id
+
+    write(newsd, &offset, sizeof(int));
+    if (offset == -1)
+        return;
+
+    struct flock lock_cart;
+    LockCart(fd_cart, lock_cart, offset, 1);
+
+    struct cart c;
+    read(fd_cart, &c, sizeof(struct cart));
+    Unlock(fd_cart, lock_cart);
+    write(newsd, &c, sizeof(struct cart));
+
+    int total = 0;
+
+    for (int i = 0; i < MAX_CART; i++)
+    {
+        if (c.items[i].prod_id != -1)
+        {
+            write(newsd, &c.items[i].qty, sizeof(int));//send all products to get the total
+
+            struct flock lock_prod;
+            ReadProductLock(fd, lock_prod);
+            lseek(fd, 0, SEEK_SET);
+
+            struct product p;
+            while (read(fd, &p, sizeof(struct product)))
+            {
+                if (p.prod_id == c.items[i].prod_id && p.qty > 0) 
+                {
+                    int min;
+                    if(c.items[i].qty >= p.qty)//whymin
+                        min = p.qty;
+                    else
+                        min = c.items[i].qty;
+
+                    write(newsd, &min, sizeof(int));
+                    write(newsd, &p.cost, sizeof(int));
+                }
+            }
+            Unlock(fd, lock_prod);
+        }      
+    }
+
+    char ch;
+    read(newsd, &ch, sizeof(char));
+
+    for (int i = 0; i < MAX_CART; i++)
+    {
+        struct flock lock_prod;
+        ReadProductLock(fd, lock_prod);
+        lseek(fd, 0, SEEK_SET);
+
+        struct product p;
+        while (read(fd, &p, sizeof(struct product)))
+        {
+            if (p.prod_id == c.items[i].prod_id) 
+            {
+                int min;
+                if (c.items[i].qty >= p.qty)
+                    min = p.qty;
+                else
+                    min = c.items[i].qty;
+                
+                Unlock(fd, lock_prod);
+                WriteProductLock(fd, lock_prod);
+                p.qty = p.qty - min;//update stock available
+
+                write(fd, &p, sizeof(struct product));
+                Unlock(fd, lock_prod);
+            }
+        }
+
+        Unlock(fd, lock_prod);
+    }
+    
+    LockCart(fd_cart, lock_cart, offset, 2);
+
+    for(int i = 0; i < MAX_CART; i++)//reset cart for new customer
+    {
+        c.items[i].prod_id = -1;
+        strcpy(c.items[i].pname, "");
+        c.items[i].cost = -1;
+        c.items[i].qty = -1;
+    }
+
+    write(fd_cart, &c, sizeof(struct cart));
+    write(newsd, &ch, sizeof(char));
+    Unlock(fd_cart, lock_cart);
+}
+
 int main()
 {
-    
-    struct product store[MAX_STORE_SIZE]; //array of struct of products, read into this from file
-    struct cart orders[MAX_STORE_SIZE]; //purchases of the customers, each struct corresp to one customer
-    int fd_products, fd_cart;
+    printf("setting up server...\n");
     char option;
-    fd_products = open("products.txt", O_CREAT | O_EXCL | O_RDWR);
-    if(fd_products == -1)
+    int fd_products = open("products.txt", O_RDWR | O_CREAT, 0777);
+    int fd_cart = open("orders.txt", O_RDWR | O_CREAT, 0777);
+    int fd_index = open("index.txt", O_RDWR | O_CREAT, 0777);
+
+    if(fd_products == -1 || fd_cart == -1 || fd_index == -1)
     {
         perror("open file");
     }
-    fd_cart = open("cart.txt", O_CREAT | O_EXCL | O_RDWR);
-    if(fd_products == -1)
+
+    int socketfd = socket (AF_INET, SOCK_STREAM, 0);
+    if(socketfd == -1)
     {
-        perror("open file");
+        perror("socket");
+        return -1;
     }
 
-    for(int i = 0; i < MAX_STORE_SIZE; i++)
+    struct sockaddr_in server, client;
+    server.sin_family = AF_INET;
+    server.sin_addr.s_addr = INADDR_ANY;
+    server.sin_port = htons(PORT);
+
+    if(bind(socketfd, (struct sockaddr *)&server, sizeof(server)) == -1)
     {
-        read(fd_products, &store[i], sizeof(struct product));
+        perror("bind");
+        return -1;
     }
-    for(int i = 0; i < MAX_STORE_SIZE; i++)
+    if(listen(socketfd, 5) == -1)
     {
-        read(fd_cart, &orders[i], sizeof(struct cart));
-    }
+        perror("listen");
+        return -1;
+    } //wait for client
 
+    printf("server ready\n");
 
-
-    printf("Enter 'c' to receive requests from client\n Enter 'a' to execute admin tasks\n");
-    scanf("%c", &option);
-
-    if(option == 'c')
+    while(1)
     {
-        struct sockaddr_in server, client;
-        fd_set readfds;
-        int socketfd, new_sd, max_clients = 10, maxsd, sd;
-        int client_socket[10];
-        
-        for(int i = 0; i < max_clients; i++)
+        int newsd = accept(socketfd, (struct sockaddr *)&client, sizeof(client));
+        if(newsd == -1)
         {
-            client_socket[i] = 0; //initialise all clients socket to 0 which is unchecked
+            perror("error newsd"); 
+            return -1;
         }
 
-        socketfd = socket (AF_INET, SOCK_STREAM, 0);//creating master socketfd
-
-        server.sin_family = AF_INET;
-        server.sin_addr.s_addr = INADDR_ANY;
-        server.sin_port = htons (PORT);
-
-        bind(socketfd, (struct sockaddr *)&server, sizeof (server));
-        if(listen (socketfd, 1) < 0){
-            perror("listen");
-            exit(EXIT_FAILURE);
-        } //wait for client
-
-        int val;
-        while(1)
+        if(!fork())
         {
-            FD_ZERO(&readfds);//ckear socket set
+            printf("Connection established with client");
+            close(socketfd);
 
-            FD_SET(socketfd, &readfds);
-            maxsd = socketfd;
+            int login;
+            login = read(newsd, &login, sizeof(int));
 
-             //add child sockets to set 
-            for (int i = 0 ; i < max_clients ; i++)  
-            {  
-                //socket descriptor 
-                sd = client_socket[i];  
-
-                //if valid socket descriptor then add to read list 
-                if(sd > 0)  
-                    FD_SET( sd , &readfds);  
-
-                //highest file descriptor number, need it for the select function 
-                if(sd > maxsd)  
-                    maxsd = sd;  
-            }  
-
-            if (FD_ISSET(socketfd, &readfds))  
-            {  
-            if ((new_sd = accept(socketfd, (struct sockaddr *)&server, (socklen_t*)&server))<0)  
-            {  
-                perror("accept");  
-                exit(EXIT_FAILURE);  
-            }  
-             
-            //inform user of socket number - used in send and receive commands 
-            printf("New connection , socket fd is %d , ip is : %s , port : %d\n" , new_sd , inet_ntoa(server.sin_addr) , ntohs(server.sin_port));  
-           
-            // //send new connection greeting message 
-            // if( send(new_sd, message, strlen(message), 0) != strlen(message) )  
-            // {  
-            //     perror("send");  
-            // }  
-                 
-            //add new socket to array of sockets 
-            for (int i = 0; i < max_clients; i++)  
-            {  
-                //if position is empty 
-                if( client_socket[i] == 0 )  
-                {  
-                    client_socket[i] = new_sd;  
-                    printf("Adding to list of sockets as %d\n" , i);  
-                         
-                    break;  
-                }  
-            }  
-        }
-
-            new_sd = accept(socketfd, (struct sockaddr *)&client, sizeof(client));; //connection request from client, ready to comm
-            read(new_sd, &val, 4);
-            
-            if(val == 1)
+            if(login == 1)//customer
             {
-                for(int i = 0; i < MAX_STORE_SIZE; i++)
+                int choice;
+                while(1)
                 {
-                    if(store[i].qty != 0)
+                    //set all file pointers to beginning of file
+                    lseek(fd_products, 0, SEEK_SET);
+                    lseek(fd_cart, 0, SEEK_SET);
+                    lseek(fd_index, 0, SEEK_SET);
+
+                    read(newsd, &choice, sizeof(int));
+
+                    if(choice == 0)
                     {
-                        write(new_sd, &store[i], sizeof(struct product));
+                        AddCustomer(fd_cart, fd_index, newsd);
                     }
-                }
-            }
-            if(val == 2)
-            {
-                int custid;
-                read(new_sd, &custid, 4);
-                for(int i = 0; i < MAX_STORE_SIZE; i++)
-                {
-                    if(orders[i].cust_id == custid)
+                    else if(choice == 1)
                     {
-                        write(new_sd, &orders[i], sizeof(struct cart));
+                        showProducts(fd_products, newsd);
                     }
-                }
-            }
-            if(val == 3)
-            {
-                int quantity, id, custid = 1;
-                read(new_sd, &id,4);
-                read(new_sd, &quantity,4);
-                for(int i = 0; i < MAX_STORE_SIZE; i++)
-                {
-                    if(orders[i].cust_id == custid)
+                    else if(choice == 2)
                     {
-                        for(int j = 0; j < MAX_STORE_SIZE; j++)
-                        {
-                            if(store[j].prod_id == id)
-                            {
-                                struct product newp;
-                                newp = store[j];
-                                newp.qty = quantity;
-                                orders[i].items[orders[i].uniq_count] = newp;
-                                orders[i].uniq_count++;
-                            }
-                        }
+                        ViewCart(fd_cart, fd_index, newsd);
                     }
-                }
-
-            }
-            if(val == 4)
-            {
-                int quantity, id, custid = 1;
-                read(new_sd, &id,4);
-                read(new_sd, &quantity,4);
-                for(int i = 0; i < MAX_STORE_SIZE; i++)
-                {
-                    if(orders[i].cust_id == custid)
+                    else if(choice == 3)
                     {
-                        for(int j = 0; j < MAX_STORE_SIZE; j++)
-                        {
-                            if(store[j].prod_id == id)
-                            {
-                                struct product newp;
-                                newp = store[j];
-                                newp.qty = quantity;
-                                for(int k = 0; k < 50; k++)
-                                {
-                                    if(orders[i].items[k].prod_id == id)
-                                    {
-                                        orders[i].items[k].qty = quantity;
-                                        if(quantity == 0)
-                                            orders[i].items[k].prod_id = 0;//this deletes the item from cart
-                                    }
-                                }
-                            }
-                        }
+                        BuyProduct(fd_products, fd_cart, fd_index, newsd);
                     }
-                }
-
-            }
-            
-        }
-    }
-
-    if(option == 's')
-    {
-        printf("----------ADMIN-----------\n");
-
-        int choice = 0;
-        while(choice < 5)
-        {
-            printf("Enter the option of what you want to do \n1)Add a product \n2)Modify price of existing product\n3)Modify quantity of existing product\4)Delete product \n5)Exit");
-
-            if(choice == 1)
-            {
-                struct product newp;
-                printf("Enter product name: ");
-                scanf("%s", &newp.pname);
-                printf("Enter product id: ");
-                scanf("%s", &newp.prod_id);
-                printf("Enter product cost: ");
-                scanf("%s", &newp.cost);
-                printf("Enter product quantity: ");
-                scanf("%s", &newp.qty);
-
-                struct flock lock; int flg = 0;
-                lock.l_len = sizeof(struct product);
-                lock.l_start = SEEK_SET;
-                lock.l_type = F_WRLCK;
-
-                for(int i = 0; i < MAX_STORE_SIZE; i++)
-                {
-                    if(store[i].prod_id == -1) //find empty loc to write new product
+                     else if(choice == 4)
                     {
-                        lock.l_whence = (i + 1)*sizeof(struct product);
-                        fcntl(fd_products, F_SETLKW, &lock);
-                        write(fd_products, &newp, sizeof(struct product));
-                        sleep(3);
-                        store[i] = newp;
-                        fcntl(fd_products, F_UNLCK); 
-                        flg = 1;
-                        break;
+                        EditCart(fd_products, fd_cart, fd_index, newsd);
                     }
-                }
-                if(flg == 0)
-                {
-                    printf("Store full, cannot add more items\n");
-                }
-
-            }
-            if(choice == 2)
-            {
-                int id;
-                printf("Enter product id of product price you want to change: ");
-                scanf("%d", &id);
-
-                struct flock lock; int flg = 0;
-                lock.l_len = sizeof(struct product);
-                lock.l_start = SEEK_SET;
-                lock.l_type = F_WRLCK;
-
-                for (int i = 0; i < MAX_STORE_SIZE; i++)
-                {
-                    if(store[i].prod_id == id)
+                    else if(choice == 5)
                     {
-                        int newcost;
-                        printf("\nEnter new price: ");
-                        scanf("%d", &newcost);
-                        struct product tmp;
-                        lock.l_whence = (i + 1)*sizeof(struct product);
-                        fcntl(fd_products, F_SETLKW, &lock);
-                        //read(fd_products, &tmp, sizeof(stuct product));
-                        store[i].cost = newcost;
-                        write(fd_products, &store[i], sizeof(struct product));
-                        sleep(3);
-                        fcntl(fd_products, F_UNLCK); 
-                        flg = 1;
-                        break;
+                        GetPayment(fd_products, fd_cart, fd_index, newsd);
                     }
-                }
-                if(flg == 0)
-                {
-                    printf("That product id does not exist, try again.\n");
+
+                    printf("Connection closed\n");
                 }
                 
             }
-            if(choice == 3)
+            else if(login == 2)
             {
-                int id;
-                printf("Enter product id of product quantity you want to change: ");
-                scanf("%d", &id);
-
-                struct flock lock; int flg = 0;
-                lock.l_len = sizeof(struct product);
-                lock.l_start = SEEK_SET;
-                lock.l_type = F_WRLCK;
-
-                for (int i = 0; i < MAX_STORE_SIZE; i++)
+                int choice = 0;
+                while(1)
                 {
-                    if(store[i].prod_id == id)
+                    //set all file pointers to beginning of file
+                    lseek(fd_products, 0, SEEK_SET);
+                    lseek(fd_cart, 0, SEEK_SET);
+                    lseek(fd_index, 0, SEEK_SET);
+
+                    read(newsd, &choice, sizeof(int));
+
+                    if(choice == 1)
                     {
-                        int newqty;
-                        printf("\nEnter new quantity: ");
-                        scanf("%d", &newqty);
-                        struct product tmp;
-                        lock.l_whence = (i + 1)*sizeof(struct product);
-                        fcntl(fd_products, F_SETLKW, &lock);
-                        //read(fd_products, &tmp, sizeof(stuct product));
-                        store[i].qty = newqty;
-                        write(fd_products, &store[i], sizeof(struct product));
-                        sleep(3);
-                        fcntl(fd_products, F_UNLCK); 
-                        flg = 1;
-                        break;
+                        addProduct(fd_products,newsd);
                     }
-                }
-                if(flg == 0)
-                {
-                    printf("That product id does not exist, try again.\n");
-                }
-                
-            }if(choice == 4)
-            {
-                int id;
-                printf("Enter product id of product you want to delete: ");
-                scanf("%d", &id);
-
-                struct flock lock; int flg = 0;
-                lock.l_len = sizeof(struct product);
-                lock.l_start = SEEK_SET;
-                lock.l_type = F_WRLCK;
-
-                for (int i = 0; i < MAX_STORE_SIZE; i++)
-                {
-                    if(store[i].prod_id == id)
+                    else if(choice == 2)
                     {
-                        lock.l_whence = (i + 1)*sizeof(struct product);
-                        fcntl(fd_products, F_SETLKW, &lock);
-                        store[i].prod_id = -1;
-                        write(fd_products, &store[i], sizeof(struct product));
-                        sleep(3);
-                        fcntl(fd_products, F_UNLCK); 
-                        flg = 1;
-                        break;
+                        updateProduct(fd_products, newsd, 1);
                     }
+                    else if(choice == 3)
+                    {
+                        updateProduct(fd_products, newsd, 2);
+                    }
+                    else if(choice == 4)
+                    {
+                        int pid; read(newsd, &pid, 4);
+                        deleteProduct(fd_products, newsd, pid);
+                    }
+                    else if(choice == 5)
+                    {
+                        showProducts(fd_products, newsd);
+                    }
+
+                    printf("Connection closed\n");
                 }
-                if(flg == 0)
-                {
-                    printf("That product id does not exist, try again.\n");
-                }
-                
             }
         }
-
-
-
-
+        else
+        {
+            close(newsd);
+        }
     }
 
+    printf("Shutting down server...\n");
 }
