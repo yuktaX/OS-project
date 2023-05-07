@@ -32,13 +32,13 @@ void WriteProductLock(int fd, struct flock lock)
     fcntl(fd, F_SETLKW, &lock);
 }
 
-void CustomerLock(int fd_cust, struct flock lock)
+void CustomerLock(int fd_index, struct flock lock)
 {   //locks customers file
     lock.l_len = 0;
     lock.l_type = F_RDLCK;
     lock.l_start = 0;
     lock.l_whence = SEEK_SET;
-    fcntl(fd_cust, F_SETLKW, &lock);
+    fcntl(fd_index, F_SETLKW, &lock);
 }
 
 void Unlock(int fd, struct flock lock)
@@ -47,7 +47,7 @@ void Unlock(int fd, struct flock lock)
     fcntl(fd, F_SETLKW, &lock);
 }
 
-void LockCart(int fd_cart, struct flock lock_cart, int offset, int ch)//--whats ch
+void LockCart(int fd_cart, struct flock lock_cart, int offset, int ch)//--ch denotes weather to do rdlock or wrlock
 {
     lock_cart.l_whence = SEEK_SET;
     lock_cart.l_len = sizeof(struct cart);
@@ -64,22 +64,24 @@ void LockCart(int fd_cart, struct flock lock_cart, int offset, int ch)//--whats 
     lseek(fd_cart, offset, SEEK_SET);
 }
 
-int getOffset(int cid, int fd_cust)
+int getOffset(int cid, int fd_index)
 {
     if(cid  < 0)
         return -1;
     struct flock lock;
     struct index n;
-    CustomerLock(fd_cust, lock);
+    CustomerLock(fd_index, lock);
 
-    while(read(fd_cust, &n, sizeof(struct index)))
+    while(read(fd_index, &n, sizeof(struct index)))
     {
         if(n.key == cid)
         {
-            Unlock(fd_cust, lock);
+            Unlock(fd_index, lock);
             return n.offset;
         }
     }
+
+    return -1;
 }
 
 void addProduct(int fd, int newsd)
@@ -227,18 +229,18 @@ void updateProduct(int fd, int newsd, int choice)
 }
 
 //client functions
-void AddCustomer(int fd_cart, int fd_custs, int newsd)
+void AddCustomer(int fd_cart, int fd_index, int newsd)
 {
     char buf;
     read(newsd, &buf, sizeof(char));
     if (buf == 'c')
     {
         struct flock lock;
-        CustomerLock(fd_custs, lock);
+        CustomerLock(fd_index, lock);
         
         int max_id = -1; 
         struct index id;
-        while(read(fd_custs, &id, sizeof(struct index))) //finding the lastest id added to file/store
+        while(read(fd_index, &id, sizeof(struct index))) //finding the lastest id added to file/store
         {
             if (id.key > max_id)
                 max_id = id.key;
@@ -248,8 +250,8 @@ void AddCustomer(int fd_cart, int fd_custs, int newsd)
         
         id.key = max_id; //adding new id and cart id to file
         id.offset = lseek(fd_cart, 0, SEEK_END);
-        lseek(fd_custs, 0, SEEK_END);
-        write(fd_custs, &id, sizeof(struct index));
+        lseek(fd_index, 0, SEEK_END);
+        write(fd_index, &id, sizeof(struct index));
 
         struct cart c;
         c.cust_id = max_id;
@@ -262,19 +264,17 @@ void AddCustomer(int fd_cart, int fd_custs, int newsd)
         }
 
         write(fd_cart, &c, sizeof(struct cart));
-        Unlock(fd_custs, lock);
+        Unlock(fd_index, lock);
         write(newsd, &max_id, sizeof(int));
     }
 }
 
-void ViewCart(int fd_cart, int newsd, int fd_custs)
+void ViewCart(int fd_cart, int newsd, int fd_index)
 {
     int cid = -1;
     read(newsd, &cid, sizeof(int));
 
-    printf("um\n");
-
-    int offset = getOffset(cid, fd_custs);//get offset from file
+    int offset = getOffset(cid, fd_index);//get offset from file
     struct cart c;
 
     if(offset == -1)//no cid found, so set to -1
@@ -295,12 +295,12 @@ void ViewCart(int fd_cart, int newsd, int fd_custs)
         Unlock(fd_cart, lock_cart);
     }
 }
-void BuyProduct(int fd, int fd_cart, int fd_custs, int newsd)
+void BuyProduct(int fd, int fd_cart, int fd_index, int newsd)
 {
     int cid = -1;
     read(newsd, &cid, sizeof(int));
-    int offset = getOffset(cid, fd_custs);
-
+    int offset = getOffset(cid, fd_index);
+    printf("offest %d", offset);
     write(newsd, &offset, sizeof(int));
 
     if (offset == -1)
@@ -396,12 +396,12 @@ void BuyProduct(int fd, int fd_cart, int fd_custs, int newsd)
     Unlock(fd_cart, lock_cart);
 }
 
-void EditCart(int fd, int fd_cart, int fd_custs, int newsd){
+void EditCart(int fd, int fd_cart, int fd_index, int newsd){
 
     int cid = -1;
     read(newsd, &cid, sizeof(int));
 
-    int offset = getOffset(cid, fd_custs);
+    int offset = getOffset(cid, fd_index);
 
     write(newsd, &offset, sizeof(int));
     if (offset == -1)
@@ -413,7 +413,7 @@ void EditCart(int fd, int fd_cart, int fd_custs, int newsd){
     struct cart c;
     read(fd_cart, &c, sizeof(struct cart));
 
-    int pid, qty;
+    //int pid, qty;
     struct product p;
     read(newsd, &p, sizeof(struct product));
 
@@ -429,10 +429,10 @@ void EditCart(int fd, int fd_cart, int fd_custs, int newsd){
             struct product p1;
             while(read(fd, &p1, sizeof(struct product)))//check if product is there in store
             {
-                if (p1.prod_id == pid && p1.qty > 0) 
+                if (p1.prod_id == p.prod_id && p1.qty > 0) 
                 {
                     flg = 0;
-                    if (p1.qty >= qty)
+                    if (p1.qty >= p.qty)
                     {
                         flg = 1;
                         break;
@@ -457,18 +457,18 @@ void EditCart(int fd, int fd_cart, int fd_custs, int newsd){
         return;
     }
 
-    c.items[i].qty = qty;
+    c.items[i].qty = p.qty;
     write(newsd, "Update successful\n", sizeof("Update successful\n"));
     LockCart(fd_cart, lock_cart, offset, 2);
     write(fd_cart, &c, sizeof(struct cart));
     Unlock(fd_cart, lock_cart);
 }
 
-void GetPayment(int fd, int fd_cart, int fd_custs, int newsd){
+void GetPayment(int fd, int fd_cart, int fd_index, int newsd){
     int cid = -1;
     read(newsd, &cid, sizeof(int));
 
-    int offset = getOffset(cid, fd_custs); //get the cart for resp customer id
+    int offset = getOffset(cid, fd_index); //get the cart for resp customer id
 
     write(newsd, &offset, sizeof(int));
     if (offset == -1)
@@ -478,7 +478,7 @@ void GetPayment(int fd, int fd_cart, int fd_custs, int newsd){
     LockCart(fd_cart, lock_cart, offset, 1);
 
     struct cart c;
-    read(fd_cart, &c, sizeof(struct cart));
+    read(fd_cart, &c, sizeof(struct cart));//read customer cart from file
     Unlock(fd_cart, lock_cart);
     write(newsd, &c, sizeof(struct cart));
 
@@ -505,8 +505,8 @@ void GetPayment(int fd, int fd_cart, int fd_custs, int newsd){
                     else
                         min = c.items[i].qty;
 
-                    write(newsd, &min, sizeof(int));
-                    write(newsd, &p.cost, sizeof(int));
+                    write(newsd, &min, sizeof(int));//stock
+                    write(newsd, &p.cost, sizeof(int));//cost
                 }
             }
             Unlock(fd, lock_prod);
@@ -545,7 +545,7 @@ void GetPayment(int fd, int fd_cart, int fd_custs, int newsd){
         Unlock(fd, lock_prod);
     }
     
-    LockCart(fd_cart, lock_cart, offset, 2);
+    LockCart(fd_cart, lock_cart, offset, 2);//write lock
 
     for(int i = 0; i < MAX_CART; i++)//reset cart for new customer
     {
@@ -616,7 +616,6 @@ int main()
             return -1;
         }
 
-        printf("before fork\n");
 
         if(!fork())
         {
@@ -625,8 +624,6 @@ int main()
 
             int login;
             read(newsd, &login, sizeof(int));
-
-            printf("login %d\n", login);
 
             if(login == 1)//customer
             {
@@ -649,7 +646,7 @@ int main()
                     }
                     else if(choice == 2)
                     {
-                        ViewCart(fd_cart, fd_index, newsd);
+                        ViewCart(fd_cart, newsd, fd_index);
                     }
                     else if(choice == 3)
                     {
@@ -721,6 +718,5 @@ int main()
             close(newsd);
         }
     }
-
     printf("Shutting down server...\n");
 }

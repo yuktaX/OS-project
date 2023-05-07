@@ -48,7 +48,7 @@ int getTotal(struct cart c)
 void generateReceipt(struct cart c, int total)
 {
     int fd_rec = open("receipt.txt", O_CREAT | O_RDWR, 0777);
-    write(fd_rec, "ID\tName\tQuantity\tPrice\n", strlen("ProductID\tProductName\tQuantity\tPrice\n"));
+    write(fd_rec, "ID\tName\tQuantity\tPrice\n", strlen("ID\tName\tQuantity\tPrice\n"));
     char tmp[200];
     for (int i=0; i < MAX_CART; i++)
     {
@@ -68,17 +68,13 @@ int getCustomerID()
     int id = -1;
     while(1)
     {
-        printf("LITERALLT WJDIJWJIWJ");
-        printf("Enter customer id: %d\n", id);
+        printf("Enter customer id: \n");
         scanf("%d", &id);
-        scanf("%d", &id);
-        printf("mf id %d", id);
         if(id < 0)
             printf("Please enter a postive number\n");
         else    
             break;
     }
-    printf("bruh");
     return id;
 }
 
@@ -196,8 +192,6 @@ int main()
             scanf("%d", &choice);
             write(socketfd, &choice, sizeof(int));
 
-            if(1) printf("swdwwdw %d\n", choice);
-
             if(choice == 0)
             {
                 printf("Enter 'b' if you want to go back or 'c' to continue\n");
@@ -223,7 +217,6 @@ int main()
             else if(choice == 2)
             {
                 int cid = getCustomerID();
-                printf("cid ------%d", cid);
 
                 write(socketfd, &cid, sizeof(int));
 
@@ -249,17 +242,8 @@ int main()
                 char response[80];
                 int pid, qty;
                 pid = setProductID();
+                qty = setProductQty();
                 
-                while(1)//use fucn here?--getting product data from customer
-                {
-                    printf("Enter quantity: \n");
-                    scanf("%d", &qty);
-                    if (qty <= 0)
-                        printf("Quantity has to be more than 0, please try again\n");
-                    else
-                        break;
-                }
-
                 struct product p;
                 p.prod_id = pid;
                 p.qty = qty;
@@ -283,7 +267,6 @@ int main()
                     continue;
                 }
 
-                char response[80];//??
                 int pid = setProductID();
                 int qty = setProductQty();
 
@@ -292,6 +275,7 @@ int main()
                 p.qty = qty;
 
                 //passing product data to server
+                char response[80];
                 write(socketfd, &p, sizeof(struct product));
                 read(socketfd, response, sizeof(response));
                 printf("%s", response);
@@ -319,7 +303,7 @@ int main()
 
                 for(int i = 0; i < MAX_CART; i++)
                 {
-                    if(c.items[i].prod_id != 1)
+                    if(c.items[i].prod_id != -1)
                     {
                         read(socketfd, &bought, sizeof(int));
                         read(socketfd, &stock, sizeof(int));
@@ -331,8 +315,10 @@ int main()
                     }
                 }
 
+                printf("---end----\n");
+
                 int total = getTotal(c); int payed;
-                printf("Total amount to be payed: %d", total);
+                printf("Total amount to be payed: %d\n", total);
 
                 while(1)
                 {
@@ -345,7 +331,7 @@ int main()
                 }
 
                 char ch = 'y';
-                printf("Payment recorded, order placed\n");
+                printf("-------Payment successful!------\n");
                 write(socketfd, &ch, sizeof(char));
                 read(socketfd, &ch, sizeof(char));
                 generateReceipt(c, total);
@@ -353,12 +339,12 @@ int main()
             }
             else if(choice == 6)
             {
-                //printf("Thank you for shopping with us!\n");
+                printf("Thank you for shopping with us!\n");
                 break;
             }
             else if(choice != 0 || choice != 1 || choice != 2 || choice != 3 || choice != 4 || choice != 5 || choice != 6)
             {
-                printf("Invalid option try again login 1\n");
+                printf("Invalid option try again\n");
             }
 
         }
