@@ -8,7 +8,7 @@
 #include <sys/time.h>
 #include<fcntl.h>
 #include "product_cart.h"
-#define PORT 8080
+#define PORT 5555
 #define MAX_STORE_SIZE 100
 
 
@@ -92,16 +92,17 @@ void addProduct(int fd, int newsd)
     id = p.prod_id;
     cost = p.cost;
     qty = p.qty;
+    strcpy(name, p.pname);
 
     struct flock lock;
     ReadProductLock(fd, lock);
     struct product p1;
 
-    while (read(fd, &p1, sizeof(struct product)))
+    while(read(fd, &p1, sizeof(struct product)))
     {
-        if (p.prod_id == id && p.qty > 0)
+        if (p1.prod_id == id && p1.qty > 0)
         {
-            write(newsd, "Duplicate product\n", sizeof("Duplicate product\n"));
+            write(newsd, "Duplicate product, please use different id\n", sizeof("Duplicate product, please use different id\n"));
             Unlock(fd, lock);
             flg = 1;
             break;
@@ -127,15 +128,48 @@ void showProducts(int fd, int newsd)
     ReadProductLock(fd, lock);
 
     struct product p;
-    while (read(fd, &p, sizeof(struct product)))
+    while(read(fd, &p, sizeof(struct product)))
     {
         if (p.prod_id != -1)
             write(newsd, &p, sizeof(struct product));
     }
     
-    p.prod_id = -1;//--um whhy
+    p.prod_id = -1;//to indicate end of list, we set one as -1
     write(newsd, &p, sizeof(struct product));
     Unlock(fd, lock);
+}
+void deleteProduct(int fd, int newsd, int id){
+
+    struct flock lock;
+    ReadProductLock(fd, lock);
+
+    struct product p;
+    int flg = 0;
+    while (read(fd, &p, sizeof(struct product)))
+    {
+        if (p.prod_id == id)
+        {
+            Unlock(fd, lock);
+            WriteProductLock(fd, lock);
+
+            p.prod_id = -1; //id == -1 indicates invalid/deleted product
+            strcpy(p.pname, "");
+            p.cost = -1;
+            p.qty = -1;
+
+            write(fd, &p, sizeof(struct product));
+            write(newsd, "Delete successful", sizeof("Delete successful"));
+
+            Unlock(fd, lock);
+            flg = 1;
+            break;
+        }
+    }
+    if (flg == 0)
+    {
+        write(newsd, "Invalid product id", sizeof("Invalid product id"));
+        Unlock(fd, lock);
+    }
 }
 
 void updateProduct(int fd, int newsd, int choice)
@@ -192,39 +226,6 @@ void updateProduct(int fd, int newsd, int choice)
     }
 }
 
-void deleteProduct(int fd, int newsd, int id){
-
-    struct flock lock;
-    ReadProductLock(fd, lock);
-
-    struct product p;
-    int flg = 0;
-    while (read(fd, &p, sizeof(struct product)))
-    {
-        if (p.prod_id == id)
-        {
-            Unlock(fd, lock);
-            WriteProductLock(fd, lock);
-
-            p.prod_id = -1; //id == -1 indicates invalid/deleted product
-            strcpy(p.pname, "");
-            p.cost = -1;
-            p.qty = -1;
-
-            write(fd, &p, sizeof(struct product));
-            write(newsd, "Delete successful", sizeof("Delete successful"));
-
-            Unlock(fd, lock);
-            flg = 1;
-            break;
-        }
-    }
-    if (flg == 0)
-    {
-        write(newsd, "Invalid product id", sizeof("Invalid product id"));
-        Unlock(fd, lock);
-    }
-}
 //client functions
 void AddCustomer(int fd_cart, int fd_custs, int newsd)
 {
@@ -251,7 +252,7 @@ void AddCustomer(int fd_cart, int fd_custs, int newsd)
         write(fd_custs, &id, sizeof(struct index));
 
         struct cart c;
-        id.key = max_id;
+        c.cust_id = max_id;
         for(int i = 0; i < MAX_CART; i++) //initialising cart for new customer
         {
             c.items[i].prod_id = -1;
@@ -270,6 +271,8 @@ void ViewCart(int fd_cart, int newsd, int fd_custs)
 {
     int cid = -1;
     read(newsd, &cid, sizeof(int));
+
+    printf("um\n");
 
     int offset = getOffset(cid, fd_custs);//get offset from file
     struct cart c;
@@ -560,7 +563,7 @@ void GetPayment(int fd, int fd_cart, int fd_custs, int newsd){
 int main()
 {
     printf("setting up server...\n");
-    char option;
+    //char option;
     int fd_products = open("products.txt", O_RDWR | O_CREAT, 0777);
     int fd_cart = open("orders.txt", O_RDWR | O_CREAT, 0777);
     int fd_index = open("index.txt", O_RDWR | O_CREAT, 0777);
@@ -570,7 +573,7 @@ int main()
         perror("open file");
     }
 
-    int socketfd = socket (AF_INET, SOCK_STREAM, 0);
+    int socketfd = socket(AF_INET, SOCK_STREAM, 0);
     if(socketfd == -1)
     {
         perror("socket");
@@ -581,6 +584,13 @@ int main()
     server.sin_family = AF_INET;
     server.sin_addr.s_addr = INADDR_ANY;
     server.sin_port = htons(PORT);
+
+    int opt = 1;
+    if(setsockopt(socketfd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)))
+    {
+        perror("Error setsock: ");
+        return -1;
+    }
 
     if(bind(socketfd, (struct sockaddr *)&server, sizeof(server)) == -1)
     {
@@ -595,34 +605,39 @@ int main()
 
     printf("server ready\n");
 
+    int s = sizeof(client);
+
     while(1)
     {
-        int newsd = accept(socketfd, (struct sockaddr *)&client, sizeof(client));
+        int newsd = accept(socketfd, (struct sockaddr *)&client, &s);
         if(newsd == -1)
         {
             perror("error newsd"); 
             return -1;
         }
 
+        printf("before fork\n");
+
         if(!fork())
         {
-            printf("Connection established with client");
+            printf("Connection established with client\n");
             close(socketfd);
 
             int login;
-            login = read(newsd, &login, sizeof(int));
+            read(newsd, &login, sizeof(int));
+
+            printf("login %d\n", login);
 
             if(login == 1)//customer
             {
                 int choice;
                 while(1)
                 {
+                    read(newsd, &choice, sizeof(int));
                     //set all file pointers to beginning of file
                     lseek(fd_products, 0, SEEK_SET);
                     lseek(fd_cart, 0, SEEK_SET);
                     lseek(fd_index, 0, SEEK_SET);
-
-                    read(newsd, &choice, sizeof(int));
 
                     if(choice == 0)
                     {
@@ -648,11 +663,15 @@ int main()
                     {
                         GetPayment(fd_products, fd_cart, fd_index, newsd);
                     }
-
-                    printf("Connection closed\n");
+                    else if(choice == 6)
+                    {
+                        close(newsd);
+                        break;
+                    }
                 }
-                
+                printf("Connection closed\n");
             }
+
             else if(login == 2)
             {
                 int choice = 0;
@@ -686,10 +705,16 @@ int main()
                     {
                         showProducts(fd_products, newsd);
                     }
+                    else if(choice == 6)
+                    {
+                        close(newsd);
+                        break;
+                    }
 
-                    printf("Connection closed\n");
+                    //printf("Connection closed\n");
                 }
             }
+            printf("Connection closed\n");
         }
         else
         {

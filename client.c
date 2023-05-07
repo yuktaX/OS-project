@@ -7,23 +7,25 @@
 #include "product_cart.h"
 #include <fcntl.h>
 #include <sys/stat.h>
-#define PORT 8080
+#include <errno.h>
+#define PORT 5555
 
 void displayproduct(struct product p)
 {
     if(p.prod_id != -1 && p.qty > 0)
-        printf("%d\t%s\t%d\t%d", p.prod_id, p.pname, p.qty, p.cost);
+        printf("%d\t%s\t%d\t%d\n", p.prod_id, p.pname, p.qty, p.cost);
 }
 
 void displayStore(int socketfd)
 {
     printf("Connecting to store...\n");
-    printf("ProductID\tProduct Name\tQuantity Avaliable\tCost\n");
-    while (1)
+    printf("ID\tName\tStock\tCost\n");
+    while(1)
     {
         struct product p;
         read(socketfd, &p, sizeof(struct product));
-        if (p.prod_id != -1)
+        //printf("hello prod %d %d\n", p.prod_id, p.qty);
+        if(p.prod_id != -1)
             displayproduct(p);
         else
             break;
@@ -46,7 +48,7 @@ int getTotal(struct cart c)
 void generateReceipt(struct cart c, int total)
 {
     int fd_rec = open("receipt.txt", O_CREAT | O_RDWR, 0777);
-    write(fd_rec, "ProductID\tProductName\tQuantity\tPrice\n", strlen("ProductID\tProductName\tQuantity\tPrice\n"));
+    write(fd_rec, "ID\tName\tQuantity\tPrice\n", strlen("ProductID\tProductName\tQuantity\tPrice\n"));
     char tmp[200];
     for (int i=0; i < MAX_CART; i++)
     {
@@ -63,17 +65,20 @@ void generateReceipt(struct cart c, int total)
 
 int getCustomerID()
 {
-    int id = 0;
+    int id = -1;
     while(1)
     {
-        printf("Enter customer id: \n");
+        printf("LITERALLT WJDIJWJIWJ");
+        printf("Enter customer id: %d\n", id);
         scanf("%d", &id);
-
-        if(id <= 0)
+        scanf("%d", &id);
+        printf("mf id %d", id);
+        if(id < 0)
             printf("Please enter a postive number\n");
         else    
             break;
     }
+    printf("bruh");
     return id;
 }
 
@@ -84,7 +89,6 @@ int setProductID()
     {
         printf("Enter product id: \n");
         scanf("%d", &id);
-
         if(id <= 0)
             printf("Please enter a postive number\n");
         else    
@@ -96,11 +100,8 @@ int setProductID()
 char * setProductName()
 {
     char name[100];
-    while(1)
-    {
-        printf("Enter product name: \n");
-        scanf("%s", name);
-    }
+    printf("Enter product name: \n");
+    scanf("%s", name);
     return name;
 }
 
@@ -156,54 +157,62 @@ int main()
 {
     printf("Connecting to server....\n");
 
-    struct sockaddr_in client;
-    int socketfd, new_sd, connectfd;
+    //int socketfd, new_sd, connectfd;
 
-    socketfd = socket (AF_INET, SOCK_STREAM, 0);//creating socket filed
+    int socketfd = socket(AF_INET, SOCK_STREAM, 0);//creating socket filed
     if(socketfd == -1)
     {
         perror("socket error: ");
         return -1;
     }
 
+    struct sockaddr_in client;
+
     client.sin_family = AF_INET;
     client.sin_addr.s_addr = INADDR_ANY;
-    client.sin_port = htons (PORT);
+    client.sin_port = htons(PORT);
 
-    connectfd = connect(socketfd, (struct sockaddr_*)&client, sizeof(client)); //connecting to server
-    if(connectfd == -1)
+    //connectfd = connect(socketfd, (struct sockaddr *)&client, sizeof(client)); //connecting to server
+    //printf("%d", connectfd);
+    if(connect(socketfd, (struct sockaddr *)&client, sizeof(client)) == -1) //connecting to server
     {
         perror("connect failed");
         return -1;
     }
     
-    int login = 0;
+    int login;
     printf("******************Online Retail Store********************\n");
     printf("Who are you? \n1)Customer \n2)Admin\n");
     scanf("%d", &login);
-
-    write(socketfd, &login, sizeof(login));
+    printf("login is %d", login);
+    write(socketfd, &login, sizeof(int));
 
     if(login == 1)
     {
         while(1)
         {
-            int choice = -1;
-            printf("What would you like to do? If you're a new customer please register first. Enter 0 to register. \n1)View all products in store \n2)View your cart \n3)Buy a product \n4)Edit cart \n5)Confirm cart and go to payment \n6)Exit\nEnter: ");
+            int choice;
+            printf("\nWhat would you like to do? If you're a new customer please register first. Enter 0 to register. \n1)View all products in store \n2)View your cart \n3)Buy a product \n4)Edit cart \n5)Confirm cart and go to payment \n6)Exit\nEnter choice:");
             scanf("%d", &choice);
+            write(socketfd, &choice, sizeof(int));
+
+            if(1) printf("swdwwdw %d\n", choice);
 
             if(choice == 0)
             {
+                printf("Enter 'b' if you want to go back or 'c' to continue\n");
                 char confirm;
-                printf("Enter 'b' if you want to go back or 'c' to continue");
+                //printf("Enter 'b' if you want to go back or 'c' to continue");
                 scanf("%c", &confirm);
+                scanf("%c", &confirm);
+                write(socketfd, &confirm, sizeof(confirm));
                 if(confirm == 'b')
                     printf("terminated\n");
                 else
                 {
                     int id;
                     read(socketfd, &id, 4);
-                    printf("Your customer id is: %d", &id);
+                    printf("Your customer id is: %d", id);
                 }
             }
             else if(choice == 1)
@@ -214,6 +223,7 @@ int main()
             else if(choice == 2)
             {
                 int cid = getCustomerID();
+                printf("cid ------%d", cid);
 
                 write(socketfd, &cid, sizeof(int));
 
@@ -343,12 +353,12 @@ int main()
             }
             else if(choice == 6)
             {
-                printf("Thank you for shopping with us!\n");
+                //printf("Thank you for shopping with us!\n");
                 break;
             }
-            else
+            else if(choice != 0 || choice != 1 || choice != 2 || choice != 3 || choice != 4 || choice != 5 || choice != 6)
             {
-                printf("Invalid option try again\n");
+                printf("Invalid option try again login 1\n");
             }
 
         }
@@ -361,7 +371,7 @@ int main()
 
         while(1)
         {
-            printf("What you want to do \n1)Add a product \n2)Modify price of existing product\n3)Modify quantity of existing product\n4)Delete product\n5)View all products in store \n6)Exit\nEnter:");
+            printf("\nWhat would you like to do \n1)Add a product \n2)Modify price of existing product\n3)Modify quantity of existing product\n4)Delete product\n5)View all products in store \n6)Exit\nEnter:");
             int choice = 0;
             scanf("%d", &choice);
             write(socketfd, &choice, 4);
@@ -370,8 +380,14 @@ int main()
             {
                 struct product p;
                 p.prod_id = setProductID();
-                strcpy(p.pname, setProductName());
-                p.cost = setProductQty();
+                char name[100];
+                printf("Enter product name: \n");
+                scanf("%s", name);
+                strcpy(p.pname, name);
+                //strcpy(p.pname, setProductName());
+                p.cost = setProductCost();
+                p.qty = setProductQty();
+                
 
                 write(socketfd, &p, sizeof(struct product));
 
@@ -423,14 +439,15 @@ int main()
                 break;
             }
             else
-                printf("Invalid option, try again\n");
+                printf("Invalid option, try again 2\n");
         }
     }
-    else
-    {
-        printf("Invalid option, try again\n");
-
-    }
+    // else
+    // {
+    //     printf("Invalid option, try again\n");
+    // }
+    close(socketfd);
     printf("Exiting...");
+    return 0;
     
 }
