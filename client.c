@@ -24,7 +24,6 @@ void displayStore(int socketfd)
     {
         struct product p;
         read(socketfd, &p, sizeof(struct product));
-        //printf("hello prod %d %d\n", p.prod_id, p.qty);
         if(p.prod_id != -1)
             displayproduct(p);
         else
@@ -93,13 +92,13 @@ int setProductID()
     return id;
 }
 
-char * setProductName()
-{
-    char name[100];
-    printf("Enter product name: \n");
-    scanf("%s", name);
-    return name;
-}
+// char * setProductName()
+// {
+//     char name[100];
+//     printf("Enter product name: \n");
+//     scanf("%s", name);
+//     return name;
+// }
 
 int setProductCost()
 {
@@ -138,7 +137,7 @@ void displayMycart(struct cart c)
     if(c.cust_id != -1)
     {
         printf("Customer ID %d\n", c.cust_id);
-        printf("ProductID\tProductName\tQuantity Available\tPrice\n");
+        printf("ID\tName\tQuantity\tPrice\n");
         for (int i = 0; i < MAX_CART; i++)
         {
             displayproduct(c.items[i]);
@@ -153,8 +152,6 @@ int main()
 {
     printf("Connecting to server....\n");
 
-    //int socketfd, new_sd, connectfd;
-
     int socketfd = socket(AF_INET, SOCK_STREAM, 0);//creating socket filed
     if(socketfd == -1)
     {
@@ -168,8 +165,6 @@ int main()
     client.sin_addr.s_addr = INADDR_ANY;
     client.sin_port = htons(PORT);
 
-    //connectfd = connect(socketfd, (struct sockaddr *)&client, sizeof(client)); //connecting to server
-    //printf("%d", connectfd);
     if(connect(socketfd, (struct sockaddr *)&client, sizeof(client)) == -1) //connecting to server
     {
         perror("connect failed");
@@ -180,7 +175,7 @@ int main()
     printf("******************Online Retail Store********************\n");
     printf("Who are you? \n1)Customer \n2)Admin\n");
     scanf("%d", &login);
-    printf("login is %d", login);
+    //printf("login is %d", login);
     write(socketfd, &login, sizeof(int));
 
     if(login == 1)
@@ -196,7 +191,6 @@ int main()
             {
                 printf("Enter 'b' if you want to go back or 'c' to continue\n");
                 char confirm;
-                //printf("Enter 'b' if you want to go back or 'c' to continue");
                 scanf("%c", &confirm);
                 scanf("%c", &confirm);
                 write(socketfd, &confirm, sizeof(confirm));
@@ -311,14 +305,14 @@ int main()
                         printf("Product id- %d\n", c.items[i].prod_id);
                         printf("Ordered - %d; In stock - %d; Price - %d\n", bought, stock, cost);
                         c.items[i].qty = stock;
-                        c.items[i].cost = cost;//why
+                        c.items[i].cost = cost;
                     }
                 }
 
-                printf("---end----\n");
+                printf("-----------end-----------\n");
 
                 int total = getTotal(c); int payed;
-                printf("Total amount to be payed: %d\n", total);
+                printf("\nTotal amount to be payed: %d\n", total);
 
                 while(1)
                 {
@@ -370,7 +364,6 @@ int main()
                 printf("Enter product name: \n");
                 scanf("%s", name);
                 strcpy(p.pname, name);
-                //strcpy(p.pname, setProductName());
                 p.cost = setProductCost();
                 p.qty = setProductQty();
                 
@@ -428,10 +421,6 @@ int main()
                 printf("Invalid option, try again 2\n");
         }
     }
-    // else
-    // {
-    //     printf("Invalid option, try again\n");
-    // }
     close(socketfd);
     printf("Exiting...");
     return 0;
