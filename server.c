@@ -513,7 +513,7 @@ void GetPayment(int fd, int fd_cart, int fd_index, int newsd)
             ReadProductLock(fd, lock_prod);
             lseek(fd, 0, SEEK_SET);
 
-            struct product p;
+            struct product p; int flg = 0;
             while (read(fd, &p, sizeof(struct product)))
             {
                 if (p.prod_id == c.items[i].prod_id && p.qty > 0)
@@ -524,11 +524,19 @@ void GetPayment(int fd, int fd_cart, int fd_index, int newsd)
                     else
                         min = c.items[i].qty;
 
+                    flg = 1;
                     write(newsd, &min, sizeof(int));    // stock
                     write(newsd, &p.cost, sizeof(int)); // cost
                 }
             }
             Unlock(fd, lock_prod);
+
+            if(flg == 0)//product no longer exists
+            {
+                int val = 0;
+                write(newsd, &val, sizeof(int));
+                write(newsd, &val, sizeof(int));
+            }
         }
     }
 

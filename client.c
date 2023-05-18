@@ -292,6 +292,7 @@ int main()
                 read(socketfd, &c, sizeof(struct cart));
 
                 printf("Here is a summary of your cart\n");
+                printf("---------------------------------------------\n");
 
                 int bought, stock, cost;
 
@@ -314,18 +315,21 @@ int main()
                 int total = getTotal(c); int payed;
                 printf("\nTotal amount to be payed: %d\n", total);
 
-                while(1)
+                while(1 && total != 0)
                 {
                     printf("Enter amount you want to pay: ");
                     scanf("%d", &payed);
                     if(payed != total)
                         printf("Wrong amount, kindly re-enter.\n");
                     else
+                    {
+                        printf("-------Payment successful!------\n");
                         break;
+                    }
                 }
 
                 char ch = 'y';
-                printf("-------Payment successful!------\n");
+                
                 write(socketfd, &ch, sizeof(char));
                 read(socketfd, &ch, sizeof(char));
                 generateReceipt(c, total);
@@ -418,7 +422,7 @@ int main()
                 break;
             }
             else
-                printf("Invalid option, try again 2\n");
+                printf("Invalid option, try again\n");
         }
     }
     close(socketfd);
